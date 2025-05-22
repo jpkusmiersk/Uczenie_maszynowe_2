@@ -20,5 +20,6 @@ def load_wksf_dataset(filePath):
     dataset = dataset.filter(lambda line: ~tf.strings.regex_full_match(line, ".*[<].*"))
     dataset = dataset.map(lambda line: tf.strings.regex_replace(line, "\[[0-9]+\]", ""))
     dataset = dataset.map(lambda line: tf.strings.regex_replace(line, "\[\/\]", ""))
+    dataset = dataset.map(lambda line: tf.strings.regex_replace(line, "\[[^\]]*\]", ""))
     
     return dataset
