@@ -4,6 +4,7 @@
 import tensorflow as tf
 from termcolor import colored
 import matplotlib.pyplot as plt
+import numpy as np
 import importlib
 import sys
 sys.path.append("/Users/jakubkusmierski/Desktop/Uczenie_Maszynowe_2/modules")
@@ -15,6 +16,7 @@ importlib.reload(plf);
 ##########################################
 batchSize = 32
 nStepsPerEpoch = int(35586/batchSize) #35586 - liczba próbek w zbiorze treningowym
+buffor_size = 2048
 
 ##########################################
 ##########################################
@@ -54,10 +56,11 @@ def remove_true_MET(features, label):
 ##########################################
 #Loss function
 def loss_test(y_true, y_pred):
-    #loss = tf.keras.losses.MeanAbsoluteError()(y_true, y_pred)*10      # <- dawało najlepsze efekty póki co to plus mape tez git
-    loss = tf.keras.losses.Huber(delta=20)(y_true, y_pred)
-    loss += tf.keras.losses.MeanAbsolutePercentageError()(y_true, y_pred)
-    #loss += tf.keras.losses.MeanSquaredError()(y_true, y_pred)
+    #loss = tf.keras.losses.MeanAbsoluteError()(y_true, y_pred)*10
+    #spoko wyniki huber 20 plo mape i batchsize 32
+    loss = tf.keras.losses.Huber(delta=4)(y_true, y_pred)
+    #loss += tf.keras.losses.MeanAbsolutePercentageError()(y_true, y_pred)
+    #loss = tf.keras.losses.MeanSquaredError()(y_true, y_pred)
     return loss
 ###########################################
 ##########################################
@@ -71,14 +74,14 @@ def trainModel(model, nEpochs, train_data, val_data, nStepsPerEpoch=nStepsPerEpo
       
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate,
                     decay_steps=nStepsPerEpoch*10,
-                    decay_rate=0.90,
+                    decay_rate=0.80,
                     staircase=False)
 
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=lr_schedule), 
                 loss=loss_fn, metrics=['accuracy'])
     
     early_stop_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', mode='min', 
-                                                           patience=15, verbose=1)
+                                                           patience=30, verbose=1)
     callbacks = [early_stop_callback]
     #callbacks = []
     
@@ -136,7 +139,7 @@ def plot_H_mass(model, val_data):
     axs[0].set_xlabel("H.m [GeV]")
     axs[0].set_ylabel("Density")
     axs[0].grid(True)
-    axs[0].set_ylim(0, 1000)
+    axs[0].set_ylim(0, 600)
 
     # Wykres 2: Predicted H.m
     axs[1].hist(pred_H_m, bins=60, alpha=0.7, color='orange')
@@ -153,20 +156,33 @@ def plot_H_mass(model, val_data):
 def true_vs_predict_H_mass(model, val_data):
     true_H_m = []
     pred_H_m = []
+    true_H_pt = []
+    pred_H_pt = []
 
     for x_batch, y_batch in val_data:
         predictions = model(x_batch, training=False)
         true_H_m.extend(y_batch[:, 0].numpy())        
         pred_H_m.extend(predictions[:, 0].numpy())
+        true_H_pt.extend(y_batch[:, 1].numpy())
+        pred_H_pt.extend(predictions[:, 1].numpy())
         
-    plt.figure(figsize=(8, 6))
-    plt.scatter(true_H_m, pred_H_m, alpha=0.3)
-    plt.plot([0, 1000], [0, 1000], color='red', linestyle='--', label='Ideal')
-    plt.xlabel("True H.m")
-    plt.ylabel("Predicted H.m")
-    plt.title("True vs Predicted H.m")
-    plt.legend()
-    plt.grid(True)
+    fig, axis = plt.subplots(1, 2, figsize=(14, 5))
+    axis[0].scatter(true_H_m, pred_H_m, alpha=0.3)
+    axis[0].plot([0, 1000], [0, 1000], color='red', linestyle='--', label='Ideal')
+    axis[0].set_xlabel("True H.m")
+    axis[0].set_ylabel("Predicted H.m")
+    axis[0].set_title("True vs Predicted H.m")
+    axis[0].legend()
+    axis[0].grid(True)
+    
+    axis[1].scatter(true_H_pt, pred_H_pt, alpha=0.3)
+    axis[1].plot([0, 1000], [0, 1000], color='red', linestyle='--', label='Ideal')
+    axis[1].set_xlabel("True H.pt")
+    axis[1].set_ylabel("Predicted H.pt")
+    axis[1].set_title("True vs Predicted H.pt")
+    axis[1].legend()
+    axis[1].grid(True)
+    
     plt.show()
     
 ##########################################
@@ -182,6 +198,9 @@ def plot_all_labels(model, val_data, output_names):
         for i in range(len(output_names)):
             true_vals[i].extend(y_batch[:, i].numpy())
             pred_vals[i].extend(predictions[:, i].numpy())
+            
+        
+    print(colored("True Higgs mass: ", 'green'), colored(true_vals[0][1], 'cyan'),colored(' and predicted:', 'green'), colored(pred_vals[0][1], 'red'))
 
     # Tworzenie wykresów
     n_outputs = len(output_names)
@@ -260,6 +279,56 @@ def plot_MET(dataset):
     axes[1, 1].set_ylabel('log(Liczba zdarzeń)')
     axes[1, 1].legend()
     axes[1, 1].grid(True, which='both')
+
+    plt.tight_layout()
+    plt.show()
+    
+##########################################
+##########################################
+#Pull ploting
+def plot_all_pulls(model, val_data, output_names):
+    true_vals = [[] for _ in range(len(output_names))]
+    pred_vals = [[] for _ in range(len(output_names))]
+
+    # Zbieranie danych
+    for x_batch, y_batch in val_data:
+        predictions = model(x_batch, training=False)
+        for i in range(len(output_names)):
+            true_vals[i].extend(y_batch[:, i].numpy())
+            pred_vals[i].extend(predictions[:, i].numpy())
+
+    # Obliczanie pullów
+    pulls = []
+    for i in range(len(output_names)):
+        true = np.array(true_vals[i])
+        pred = np.array(pred_vals[i])
+        sigma = np.std(pred - true)
+        if sigma == 0:
+            sigma = 1e-6  # zapobiega dzieleniu przez 0
+        pull = (pred - true) / sigma
+        pulls.append(pull)
+
+        print(colored(f"[{output_names[i]}] sigma = {sigma:.4f}", 'cyan'))
+
+    # Rysowanie
+    n_outputs = len(output_names)
+    n_cols = 3
+    n_rows = (n_outputs + n_cols - 1) // n_cols
+
+    fig, axs = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
+    axs = axs.flatten()
+
+    for i in range(n_outputs):
+        axs[i].hist(pulls[i], bins=60, range=(-5, 5), color='purple', alpha=0.7, histtype='stepfilled', density=True)
+        axs[i].set_title(f"Pull: {output_names[i]}")
+        axs[i].set_xlabel("Pull value")
+        axs[i].set_ylabel("Normalized count")
+        axs[i].grid(True)
+        axs[i].axvline(0, color='black', linestyle='--')
+
+    # Ukryj puste subploty jeśli są
+    for i in range(n_outputs, len(axs)):
+        axs[i].axis('off')
 
     plt.tight_layout()
     plt.show()
